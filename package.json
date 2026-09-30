@@ -1,0 +1,15 @@
+{
+  "name": "estimate",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/serve.js",
+    "test": "node --test tests/model.test.js",
+    "test:ui": "playwright test"
+  },
+  "devDependencies": {
+    "@napi-rs/canvas": "^1.0.9",
+    "@playwright/test": "^1.63.0",
+    "pdfjs-dist": "^6.3.289"
+  }
+}
