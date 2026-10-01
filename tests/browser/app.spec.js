@@ -7,7 +7,7 @@ async function item(page,name='로그인 기능',price='300000',description='이
 }
 async function setup(page){await admin(page);await group(page,'웹사이트');await group(page,'페이지',true);await item(page);await compose(page);}
 async function noOverflow(page){expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}
-test.beforeEach(async({page})=>{page.on('pageerror',error=>{throw error;});await page.goto('/');});
+test.beforeEach(async({page})=>{await page.route('**/src/config.js',route=>route.fulfill({contentType:'text/javascript',body:'export const config={};'}));page.on('pageerror',error=>{throw error;});await page.goto('/');});
 test('관리자 생성·이름 변경·취소·복제·삭제·접기',async({page})=>{
  await admin(page);await page.locator('#add-item').click();await expect(page.locator('#message')).toContainText('그룹을 먼저');
  await group(page,'웹사이트');await group(page,'페이지',true);await item(page);
@@ -49,9 +49,9 @@ test('실제 드래그 정렬·그룹 이동·루트 이동·순환 차단',asyn
 });
 test('저장 실패·잘못된 폴더·미연결 안내와 작성 내용 유지',async({page})=>{
  await setup(page);await page.locator('[data-add]').click();for(const button of ['#draft','#save']){await page.locator(button).click();await expect(page.locator('#message')).toContainText('설정되어 있지');await expect(page.locator('.quote-line')).toHaveCount(1);}
- await admin(page);await page.locator('#folder').fill('/tmp/견적');await page.locator('#check-drive').click();await expect(page.locator('#message')).toContainText('폴더 URL');
- await page.locator('#folder').fill('https://drive.google.com/drive/folders/test-folder');await page.locator('#check-drive').click();await expect(page.locator('#folder-result')).toContainText('확인되지 않았습니다');await expect(page.locator('#message')).toContainText('미결정');
- await page.locator('#save-catalog').click();await expect(page.locator('#message')).toContainText('미결정');await page.locator('nav [data-page="saved"]').click();await page.locator('#refresh').click();await expect(page.locator('#message')).toContainText('미결정');await expect(page.locator('.connection')).toHaveText('Drive 미연결');
+ await admin(page);await page.locator('#link-setting').click();await page.locator('#folder').fill('/tmp/견적');await page.locator('#check-drive').click();await expect(page.locator('#message')).toContainText('폴더 URL');
+ await page.locator('#folder').fill('https://drive.google.com/drive/folders/test-folder');await page.locator('#check-drive').click();await expect(page.locator('#folder-result')).toContainText('확인 중');await expect(page.locator('#message')).toContainText('연결이 필요');
+ await page.keyboard.press('Escape');await page.locator('#save-catalog').click();await expect(page.locator('#message')).toContainText('연결이 필요');await page.locator('nav [data-page="saved"]').click();await page.locator('#refresh').click();await expect(page.locator('#message')).toContainText('연결이 필요');await expect(page.locator('.connection')).toHaveText('Drive 미연결');
  await compose(page);await expect(page.locator('.quote-line')).toHaveCount(1);await page.screenshot({path:'artifacts/qa/save-failure.png',fullPage:true});
 });
 for(const width of [1440,768,390,320])test(`화면 ${width}px: 내용·반응형·가로 넘침 검사`,async({page})=>{
@@ -66,13 +66,31 @@ test('날짜만 수정한 견적도 신규 작성 전 확인',async({page})=>{
  await page.locator('#paper [data-field="validUntil"]').fill('2027-01-15');let confirmed=false;page.once('dialog',async dialog=>{confirmed=true;await dialog.dismiss();});await page.locator('#new-quote').click();expect(confirmed).toBe(true);await expect(page.locator('#paper [data-field="validUntil"]')).toHaveValue('2027-01-15');
 });
 test('폴더 입력 변경은 이전 확인 결과를 해제',async({page})=>{
- await admin(page);await page.locator('#folder').fill('old-folder');await page.locator('#check-drive').click();await page.locator('#folder').fill('/wrong/folder');await expect(page.locator('#folder-result')).toContainText('연결 확인이 필요');await page.locator('#check-drive').click();await expect(page.locator('#message')).toContainText('폴더 URL');await page.locator('.brand').click();await expect(page.locator('#compose')).toBeVisible();await page.locator('#save').click();await expect(page.locator('#message')).toContainText('설정되어 있지');
+ await admin(page);await page.locator('#link-setting').click();await page.locator('#folder').fill('old-folder');await page.locator('#check-drive').click();await page.locator('#folder').fill('/wrong/folder');await expect(page.locator('#folder-result')).toContainText('연결 확인이 필요');await page.locator('#check-drive').click();await expect(page.locator('#message')).toContainText('폴더 URL');await page.keyboard.press('Escape');await page.locator('.brand').click();await expect(page.locator('#compose')).toBeVisible();await page.locator('#save').click();await expect(page.locator('#message')).toContainText('설정되어 있지');
 });
 test('긴 설명의 화면 전환·폭 변경 후 높이와 HTML 입력 처리',async({page})=>{
  await setup(page);await page.locator('[data-add]').click();await page.locator('#paper [data-field="name"]').fill('<img src=x onerror=alert(1)>');await page.locator('#paper [data-field="description"]').fill('아주 긴 설명입니다. '.repeat(100));
  await page.locator('[data-add]').click();await page.locator('[value="row"]').click();await expect(page.locator('.quote-line')).toHaveCount(2);await admin(page);await page.setViewportSize({width:390,height:850});await compose(page);expect(await page.locator('#paper textarea').first().evaluate(el=>el.clientHeight>=el.scrollHeight-2)).toBe(true);await expect(page.locator('#paper img')).toHaveCount(0);await expect(page.locator('#paper [data-field="name"]').first()).toHaveValue('<img src=x onerror=alert(1)>');
  await page.screenshot({path:'artifacts/qa/long-description-mobile.png',fullPage:true});
 });
+test('트리 컨텍스트 추가·키보드·아이콘·인쇄 재진입',async({page})=>{
+ await admin(page);
+ const tree=page.locator('#tree'),menu=page.getByRole('menu',{name:'트리 작업'});
+ await tree.click({button:'right'});await expect(menu.getByRole('menuitem',{name:'항목 추가',exact:true})).toBeDisabled();
+ await menu.getByRole('menuitem',{name:'루트 그룹 추가'}).click();await page.locator('#detail [data-field="name"]').fill('디자인');
+ await page.getByRole('button',{name:'디자인',exact:true}).click({button:'right'});
+ await menu.getByRole('menuitem',{name:'하위 그룹 추가'}).click();await page.locator('#detail [data-field="name"]').fill('화면');
+ await page.getByRole('button',{name:'화면',exact:true}).click({button:'right'});
+ await menu.getByRole('menuitem',{name:'항목 추가',exact:true}).click();await page.locator('#detail [data-field="name"]').fill('시안');
+ const itemButton=page.getByRole('button',{name:'시안',exact:true});await itemButton.focus();await page.keyboard.press('Shift+F10');await expect(menu).toBeVisible();
+ await menu.getByRole('menuitem',{name:'항목 추가',exact:true}).click();await expect(page.locator('.node-name')).toHaveText(['디자인','화면','시안','새 항목']);
+ await itemButton.click({button:'right'});await page.keyboard.press('Escape');await expect(menu).toBeHidden();await expect(itemButton).toBeFocused();
+ await page.getByRole('button',{name:'Drive Link 설정',exact:true}).click();await expect(page.locator('.settings-wrap')).toBeVisible();await page.keyboard.press('Escape');await expect(page.locator('.settings-wrap')).toBeHidden();
+ await page.setViewportSize({width:320,height:700});await itemButton.click({button:'right'});const bounds=await menu.boundingBox();expect(bounds.x).toBeGreaterThanOrEqual(0);expect(bounds.x+bounds.width).toBeLessThanOrEqual(320);
+ await page.screenshot({path:'artifacts/qa/context-menu-320.png',fullPage:true});await page.keyboard.press('Escape');
+ await compose(page);await page.evaluate(()=>{dispatchEvent(new Event('beforeprint'));dispatchEvent(new Event('beforeprint'));});await expect(page.locator('#print-document')).toHaveCount(1);await page.evaluate(()=>dispatchEvent(new Event('afterprint')));await expect(page.locator('#print-document')).toHaveCount(0);
+});
+
 test('초기 빈 상태와 저장 목록 안내 화면',async({page})=>{
  await expect(page.locator('#paper')).toContainText('첫 항목');await page.screenshot({path:'artifacts/qa/empty-desktop.png',fullPage:true});
  for(const width of [1440,390]){await page.setViewportSize({width,height:1000});await page.locator('nav [data-page="saved"]').click();await expect(page.locator('#saved')).toContainText('Google Drive 연결이 필요');await noOverflow(page);await page.screenshot({path:`artifacts/qa/saved-${width}.png`,fullPage:true});}
