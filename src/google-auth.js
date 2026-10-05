@@ -12,19 +12,27 @@ function loadScript(src) {
 }
 export class GoogleAuth {
   constructor(config) { this.config=config; this.token=''; this.expires=0; }
+  validateClient() {
+    if(!this.config.clientId)throw new Error('Google 로그인 설정이 없습니다. src/config.js가 포함된 빌드 결과를 배포해주세요.');
+  }
   async prepare() {
-    if(!this.config.clientId || !this.config.apiKey) throw new Error('Google 인증 설정이 아직 준비되지 않았습니다.');
-    await Promise.all([loadScript('https://accounts.google.com/gsi/client'),loadScript('https://apis.google.com/js/api.js')]);
+    this.validateClient();
+    await loadScript('https://accounts.google.com/gsi/client');
+  }
+  async preparePicker() {
+    if(!this.config.apiKey||!this.config.appId)throw new Error('폴더 선택 설정(API 키·프로젝트 ID)이 없습니다. 설정을 포함해 다시 빌드해주세요.');
+    await loadScript('https://apis.google.com/js/api.js');
     await new Promise((resolve,reject)=>gapi.load('picker',{callback:resolve,onerror:()=>reject(new Error('폴더 선택창을 불러오지 못했습니다.')),timeout:20000,ontimeout:()=>reject(new Error('폴더 선택창 연결 시간 초과'))}));
   }
   authorize() {
-    if(!globalThis.google?.accounts?.oauth2) throw new Error('Google 인증을 준비 중입니다. 잠시 후 다시 연결해주세요.');
+    this.validateClient();
+    if(!globalThis.google?.accounts?.oauth2) throw new Error('Google 로그인 모듈이 로드되지 않았습니다. 네트워크·차단 확장 프로그램을 확인하고 다시 연결해주세요.');
     return new Promise((resolve,reject)=>{
       const client=google.accounts.oauth2.initTokenClient({client_id:this.config.clientId,scope:SCOPE,
         callback:response=>{
           if(response.error || !google.accounts.oauth2.hasGrantedAllScopes(response,SCOPE)) {reject(new Error('Drive 파일 접근 동의가 필요합니다.'));return;}
           this.token=response.access_token;this.expires=Date.now()+Number(response.expires_in)*1000-60000;resolve();
-        },error_callback:()=>reject(new Error('Google 로그인이 취소되었거나 팝업이 차단되었습니다.'))});
+        },error_callback:error=>reject(new Error(error?.type==='popup_failed_to_open'?'로그인 팝업을 열지 못했습니다. 이 사이트의 팝업 허용 여부를 확인해주세요.':error?.type==='popup_closed'?'Google 로그인 창을 닫았습니다. 다시 연결해주세요.':'Google 로그인 창을 여는 중 오류가 발생했습니다.'))});
       client.requestAccessToken({prompt:''});
     });
   }
@@ -33,8 +41,9 @@ export class GoogleAuth {
     return this.token;
   }
   disconnect() {this.token='';this.expires=0;}
-  pickFolder() {
+  async pickFolder() {
     const token=this.getToken();
+    await this.preparePicker();
     return new Promise((resolve,reject)=>{
       const view=new google.picker.DocsView(google.picker.ViewId.FOLDERS).setIncludeFolders(true).setSelectFolderEnabled(true);
       const picker=new google.picker.PickerBuilder().setDeveloperKey(this.config.apiKey).setAppId(this.config.appId)

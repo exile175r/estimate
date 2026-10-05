@@ -23,6 +23,17 @@
 
 ## Drive 오류 조사
 
+### 후속 확인: 로그인 창 미표시
+
+2026-10-05 운영 탭에서 Google 연결을 눌렀을 때 'Google 인증을 준비 중입니다'만 표시됐다. Google 스크립트가 DOM에 없었고, 운영 `src/config.js` 요청은 GitHub Pages 404로 실패했다. 이 파일은 Git 제외 대상이며 빌드에서 생성된다. 설정 파일 누락이 로그인 초기화를 막는 직접적인 원인이다.
+
+- 설정 누락을 '준비 중'으로 오인하지 않게 오류 안내를 수정했다.
+- 로그인과 Picker 초기화를 분리하고 모듈 미로딩·팝업 차단·창 닫힘 안내를 구분했다.
+- 인증 회귀 테스트 3개 및 빌드 통과. 수정된 `dist/`를 로컬에 생성했다. 이번 후속 수정의 운영 배포는 수행하지 않았다.
+- 설정 파일 포함 빌드 결과를 배포해야 한다. Google 콘솔 설정과 실제 계정 저장 성공은 별도 검증이 필요하다.
+
+### 앞선 저장 확인 로직 조사
+
 기존 저장 코드는 업로드 후 재조회 시 ETag 응답 헤더가 없으면 무조건 실패했다. 브라우저에서 해당 헤더를 얻지 못하는 응답을 테스트에 넣어 회귀 원인을 확인하고, v3 파일 메타데이터의 version으로 읽기 전후 및 수정 전 버전을 비교하도록 수정했다. ETag가 제공되면 기존 If-Match 조건도 유지한다.
 
 - 참고: [Google Drive files 리소스의 version](https://developers.google.com/workspace/drive/api/reference/rest/v3/files), [파일 업로드 방식](https://developers.google.com/workspace/drive/api/guides/manage-uploads).
