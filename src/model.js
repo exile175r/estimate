@@ -1,11 +1,12 @@
 export const uid = () => crypto.randomUUID();
-export function newQuote() {
+export function newQuote(issuer='') {
   const now = new Date().toISOString();
-  return {id: uid(), quoteNumber: `Q-${now.slice(0,10).replaceAll('-','')}-${uid().slice(0,8)}`, createdAt: now, updatedAt: now, status: 'draft', quoteDate: now.slice(0,10), projectName: '', validUntil: '', notes: '', items: []};
+  const date=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul'}).format(new Date());
+  return {id: uid(), quoteNumber: `Q-${date.replaceAll('-','')}-${uid().slice(0,8)}`, createdAt: now, updatedAt: now, status: 'draft', quoteDate: date, projectName: '', validUntil: '', notes: '', items: [],companyName:'',companyCode:'',recipient:'',issuer,deliveryDate:'',paymentTerms:'',workflowStatus:'draft',projectId:uid(),calculationVersion:1,discountMode:'none',globalDiscount:0,vatIncluded:false,taxRate:0.1};
 }
 export function copyQuote(quote) {
   const {id,quoteNumber,createdAt,updatedAt,status} = newQuote();
-  return {...structuredClone(quote),id,quoteNumber,createdAt,updatedAt,status,items:quote.items.map(item=>({...item,id:uid()}))};
+  return {...structuredClone(quote),id,quoteNumber,createdAt,updatedAt,status,workflowStatus:'draft',items:quote.items.map(item=>({...item,id:uid()}))};
 }
 export function snapshot(item) { return {id: uid(), sourceItemId: item.id, name: item.name, price: item.price, quantity: 1, unit: item.unit, description: item.description}; }
 export const children = (nodes, parentId) => nodes.filter(n => n.parentId === parentId).sort((a,b) => a.order-b.order);

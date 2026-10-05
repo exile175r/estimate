@@ -3,7 +3,7 @@ const scripts = new Map();
 function loadScript(src) {
   if (!scripts.has(src)) scripts.set(src,new Promise((resolve,reject)=>{
     const script=document.createElement('script'); script.src=src; script.async=true;
-    const timer=setTimeout(()=>reject(new Error('Google 연결 시간이 초과되었습니다. 다시 시도해주세요.')),20000);
+    const timer=setTimeout(()=>{scripts.delete(src);script.remove();reject(new Error('Google 연결 시간이 초과되었습니다. 다시 시도해주세요.'));},20000);
     script.onload=()=>{clearTimeout(timer);resolve();};
     script.onerror=()=>{clearTimeout(timer);scripts.delete(src);script.remove();reject(new Error('Google 인증 모듈을 불러오지 못했습니다.'));};
     document.head.append(script);

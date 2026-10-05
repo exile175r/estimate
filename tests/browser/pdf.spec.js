@@ -40,3 +40,15 @@ test('한글·긴 설명·36개 항목 PDF: 본문 보존과 페이지 영역 �
  }
  await expect(page.locator('#print-document')).toHaveCount(0);await expect(page.locator('.quote-line')).toHaveCount(36);
 });
+
+test('Drive용 한글 PDF 파일 생성·여러 페이지 렌더링',async({page})=>{
+ await page.route('**/src/config.js',route=>route.fulfill({contentType:'text/javascript',body:'export const config={};'}));await page.goto('/');
+ const bytes=await page.evaluate(async()=>{
+  const {newQuote}=await import('/src/model.js'),{createQuotePdf}=await import('/src/pdf.js');const q=newQuote('견적 작업실 · 담당자');Object.assign(q,{companyName:'한글 검증 업체',projectName:'브랜드 웹사이트 구축',recipient:'수신 담당자',paymentTerms:'계약금 50%, 완료 후 잔금 50%',deliveryDate:'2026-11-01',discountMode:'individual',vatIncluded:false,notes:'검토 후 회신 부탁드립니다.'});
+  q.items=Array.from({length:24},(_,i)=>({id:String(i),name:`작업 항목 ${i+1}`,description:i===0?'긴 설명과 한글 줄바꿈 검증입니다. '.repeat(80):'화면 제작과 검수',price:10000,quantity:3,unit:'건',discountType:'amount',discountValue:1000}));
+  return Array.from(new Uint8Array(await (await createQuotePdf(q)).arrayBuffer()));
+ });
+ await writeFile('artifacts/qa/drive-quote.pdf',new Uint8Array(bytes));const task=getDocument({data:new Uint8Array(bytes)}),pdf=await task.promise;expect(pdf.numPages).toBeGreaterThan(3);
+ for(const n of [1,pdf.numPages]){const p=await pdf.getPage(n),view=p.getViewport({scale:1.3}),canvas=createCanvas(Math.ceil(view.width),Math.ceil(view.height));await p.render({canvasContext:canvas.getContext('2d'),viewport:view}).promise;await writeFile(`artifacts/qa/drive-pdf-${n===1?'first':'last'}.png`,canvas.toBuffer('image/png'));}
+ await task.destroy();
+});

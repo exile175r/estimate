@@ -6,6 +6,28 @@
     line-height: 1.6
 }
 
+select {font:inherit;color:inherit;background:white;border:1px solid #d7ddd8;border-radius:5px;padding:8px;max-width:100%;min-width:0;width:100%}
+.calculation-settings,.line-discount,.archive-filters,.project-fields {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:18px 0}
+.calculation-settings p {grid-column:1/-1}
+.line-discount {grid-template-columns:1fr 1fr 1fr;align-items:end}
+.management,.workflow-panel {padding:20px;border-top:1px solid #d7ddd8;margin-top:20px}
+.management label {margin:12px 0}
+.quote-footer {border-top:1px solid #d7ddd8;margin-top:24px;padding-top:12px;font-size:12px;color:#66746b}
+#breakdown {text-align:right;margin-top:20px}
+.task-row,.event-row {display:flex;flex-wrap:wrap;gap:12px;padding:18px 0;border-bottom:1px solid #d7ddd8;align-items:end}
+.task-row label,.event-row label {flex:1 1 150px;min-width:0}
+.task-row input,.event-row input,.project-fields input {width:100%;min-width:0}
+.calendar-grid {display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin:20px 0;text-align:center}
+.calendar-grid button {min-height:65px;padding:6px;min-width:0}
+.calendar-grid small {display:block;font-size:11px}
+.event-form {display:flex;gap:12px;flex-wrap:wrap;align-items:end}
+.event-form label {flex:1 1 180px;min-width:0}
+.event-form input {width:100%;min-width:0}
+.saved-row {overflow-wrap:anywhere}
+button:disabled,input:disabled,select:disabled {opacity:.55;cursor:default}
+@media(max-width:760px){.calculation-settings,.line-discount,.archive-filters,.project-fields{grid-template-columns:minmax(0,1fr)}.paper-toolbar{flex-wrap:wrap;gap:8px}.workflow-panel{padding:12px}.calendar-grid button{min-height:50px}.app-header nav{flex-wrap:wrap}}
+@media print{.line-discount{grid-template-columns:1fr 1fr 1fr}.calculation-settings{grid-template-columns:1fr 1fr}.calculation-settings p{display:none}.quote-footer{break-inside:avoid}.document-heading small{display:none}}
+
 * {
     box-sizing: border-box
 }
