@@ -38,8 +38,8 @@ function harness({etag=true,checksum=false,churn=false}={}){
  return {storage,files,calls,setFail:n=>fail=n,setDelay:p=>delay=p};
 }
 test('Drive 신규 저장·재조회·수정은 같은 파일을 사용',async()=>{
- const h=harness(),q=newQuote();q.projectName='검증 견적';const first=await h.storage.saveQuote(q);assert.equal(h.files.size,1);assert.deepEqual(await h.storage.loadQuote(first.fileId),q);
- q.projectName='수정';q.status='saved';await h.storage.saveQuote(q);assert.equal(h.files.size,1);assert.equal((await h.storage.loadQuote(first.fileId)).projectName,'수정');assert.equal((await h.storage.listQuotes()).length,1);
+ const h=harness(),q=newQuote();q.projectName='검증 견적';const first=await h.storage.saveQuote(q);assert.equal([...h.files.values()].filter(f=>f.appProperties.kind==='quote').length,1);assert.deepEqual(await h.storage.loadQuote(first.fileId),q);
+ q.projectName='수정';q.status='saved';await h.storage.saveQuote(q);assert.equal([...h.files.values()].filter(f=>f.appProperties.kind==='quote').length,1);assert.equal((await h.storage.loadQuote(first.fileId)).projectName,'수정');assert.equal((await h.storage.listQuotes()).length,1);
 });
 test('저장 실패는 원본 견적 보존, 성공으로 반환하지 않음',async()=>{for(const code of [401,403,500]){const h=harness(),q=newQuote(),copy=structuredClone(q);h.setFail(code);await assert.rejects(h.storage.saveQuote(q));assert.deepEqual(q,copy);assert.equal(h.files.size,0);}});
 test('다른 세션의 수정 또는 불러오지 않은 파일 덮어쓰기 차단',async()=>{
@@ -82,4 +82,14 @@ test('조회 중 관리 버전이 바뀌어도 동일한 내용은 저장 확인
  assert.deepEqual(await h.storage.loadQuote(result.fileId),q);q.notes='정상 수정';await h.storage.saveQuote(q);
  h.files.get(result.fileId).value.notes='다른 사용자의 변경';q.notes='덮어쓰기 시도';await assert.rejects(h.storage.saveQuote(q),/다시 불러온/);
  assert.equal(h.files.get(result.fileId).value.notes,'다른 사용자의 변경');
+});
+
+test('구분 폴더 생성과 기존 단가표 이동은 재실행해도 ID와 내용을 보존',async()=>{
+ const h=harness();const value=[];
+ h.files.set('legacy',{id:'legacy',parents:['folder'],appProperties:{app:'estimate-v1',kind:'catalog',entityId:'catalog'},value,version:1});
+ const first=await h.storage.setupFolders();assert.equal(first.moved,1);assert.deepEqual(h.files.get('legacy').parents,[first.folders.catalog]);assert.deepEqual(await h.storage.loadCatalog(),value);
+ const again=await h.storage.setupFolders();assert.deepEqual(again.folders,first.folders);assert.equal(again.moved,0);
+ const probe={schema:'estimate-storage-test-v1',testId:'test',revision:1};
+ const saved=await h.storage.saveProbe('catalog',probe);probe.revision=2;assert.equal((await h.storage.saveProbe('catalog',probe)).fileId,saved.fileId);
+ assert.equal((await h.storage.readProbes())[0].value.revision,2);
 });

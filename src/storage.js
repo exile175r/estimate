@@ -11,6 +11,7 @@ export function parseFolderId(input) {
   throw new Error('Google Drive 폴더 URL 또는 Folder ID를 입력해주세요.');
 }
 const APP='estimate-v1';
+const SECTIONS={catalog:'단가표',quotes:'견적서',workspace:'업무관리'};
 export function validateQuote(value) {
   if(!value || typeof value.id!=='string' || !/^[\w-]+$/.test(value.id) || typeof value.quoteNumber!=='string' || !['draft','saved'].includes(value.status) || !Array.isArray(value.items)) throw new Error('견적 파일 형식이 올바르지 않습니다.');
   for(const key of ['projectName','quoteDate','validUntil','notes','createdAt','updatedAt']) if(typeof value[key]!=='string') throw new Error('견적 필드가 올바르지 않습니다.');
@@ -67,13 +68,42 @@ export class DriveStorage {
     } while(page);
     return files;
   }
+  async section(area,create=false){
+    if(!Object.hasOwn(SECTIONS,area))throw new Error('저장 구분이 올바르지 않습니다.');
+    const matches=await this.list('section',area);
+    if(matches.length>1)throw new Error(`${SECTIONS[area]} 폴더가 중복되어 있습니다. 자동으로 합치지 않았습니다.`);
+    if(matches.length){await this.metadata(matches[0].id,'section');return matches[0].id;}
+    if(!create)return null;
+    const created=await this.request('drive/v3/files?fields=id&supportsAllDrives=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:SECTIONS[area],mimeType:'application/vnd.google-apps.folder',parents:[this.folderId],appProperties:{app:APP,kind:'section',entityId:area}})});
+    await this.metadata(created.id,'section');return created.id;
+  }
+  async listInSection(kind,id,area){
+    const parent=await this.section(area);
+    return [...await this.list(kind,id),...(parent?await this.list(kind,id,parent):[])];
+  }
+  async companyFolders(){return this.listInSection('company',undefined,'quotes');}
+  async setupFolders(){return this.exclusive(async()=>{
+    await this.check();const folders={};for(const area of Object.keys(SECTIONS))folders[area]=await this.section(area,true);
+    let moved=0;
+    // 앱이 관리하는 기존 파일만 이동하고 내용과 파일 ID는 유지한다.
+    for(const kind of ['catalog','workspace','company','quote','pdf']){
+      const area=kind==='catalog'?'catalog':kind==='workspace'?'workspace':'quotes';
+      for(const file of await this.list(kind)){await this.moveToFolder(file.id,kind,folders[area]);moved++;}
+    }
+    return {folders,moved};
+  });}
   async metadata(id,kind) {
     const response=await this.request(`drive/v3/files/${encodeURIComponent(id)}?fields=id,parents,trashed,appProperties,version,md5Checksum,mimeType,name&supportsAllDrives=true`,{raw:true});
     const meta=await response.json();
     if(meta.trashed || meta.appProperties?.app!==APP || meta.appProperties?.kind!==kind)throw new Error('현재 폴더의 견적 작업실 파일이 아닙니다.');
     if(!meta.parents?.includes(this.folderId)){
-      if(!['quote','pdf'].includes(kind)||meta.parents?.length!==1)throw new Error('현재 폴더의 견적 작업실 파일이 아닙니다.');
-      await this.metadata(meta.parents[0],'company');
+      if(kind==='section'||meta.parents?.length!==1)throw new Error('현재 폴더의 견적 작업실 파일이 아닙니다.');
+      const parent=await this.request(`drive/v3/files/${encodeURIComponent(meta.parents[0])}?fields=id,parents,trashed,appProperties&supportsAllDrives=true`);
+      if(parent.appProperties?.kind==='section'){
+        const area=kind==='catalog'?'catalog':kind==='workspace'?'workspace':['company','quote','pdf'].includes(kind)?'quotes':kind.startsWith('probe-')?kind.slice(6):'';
+        if(parent.trashed||parent.appProperties.app!==APP||parent.appProperties.entityId!==area||!parent.parents?.includes(this.folderId))throw new Error('현재 폴더의 견적 작업실 파일이 아닙니다.');
+      }else if(['quote','pdf'].includes(kind))await this.metadata(meta.parents[0],'company');
+      else throw new Error('현재 폴더의 견적 작업실 파일이 아닙니다.');
     }
     const etag=response.headers.get('etag');
     // Drive version에는 다운로드/관리 정보 변경도 포함된다. 내용 체크섬을 우선한다.
@@ -85,7 +115,7 @@ export class DriveStorage {
     const after=await this.metadata(id,kind);
     if(!before.version||!after.version)throw new Error('Drive가 파일 체크섬과 버전을 반환하지 않았습니다. 저장 확인을 완료하지 못했습니다.');
     if(before.version!==after.version)throw new Error(`파일 내용이 조회 도중 변경되었습니다. 다시 불러와주세요. [Drive 버전 ${before.meta.version??'없음'} → ${after.meta.version??'없음'}]`);
-    const valid=kind==='quote'?validateQuote(value):kind==='workspace'?validateWorkspace(value):validateCatalog(value);
+    const valid=kind==='quote'?validateQuote(value):kind==='workspace'?validateWorkspace(value):kind.startsWith('probe-')?this.validateProbe(value):validateCatalog(value);
     this.versions.set(id,after.version);return valid;
   }
   async exclusive(action) {
@@ -93,20 +123,22 @@ export class DriveStorage {
     this.busy=true;try{return await action();}finally{this.busy=false;}
   }
   async companyFolder(quote){
-    if(!quote.companyName?.trim())return this.folderId; // 기존 견적 호환
+    const parent=await this.section('quotes',true);
+    if(!quote.companyName?.trim())return parent;
     const key=quote.companyName.trim().normalize('NFC')+'\n'+(quote.companyCode||'').trim();
     const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(key));
     const entityId=Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
-    const folders=await this.list('company',entityId);
+    const folders=await this.listInSection('company',entityId,'quotes');
     if(folders.length>1)throw new Error('업체 폴더가 중복되어 있습니다. Drive에서 확인해주세요.');
-    if(folders.length)return folders[0].id;
-    const folder=await this.request('drive/v3/files?fields=id&supportsAllDrives=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:quote.companyName.trim()+(quote.companyCode?` (${quote.companyCode})`:''),mimeType:'application/vnd.google-apps.folder',parents:[this.folderId],appProperties:{app:APP,kind:'company',entityId}})});
+    if(folders.length){await this.moveToFolder(folders[0].id,'company',parent);return folders[0].id;}
+    const folder=await this.request('drive/v3/files?fields=id&supportsAllDrives=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:quote.companyName.trim()+(quote.companyCode?` (${quote.companyCode})`:''),mimeType:'application/vnd.google-apps.folder',parents:[parent],appProperties:{app:APP,kind:'company',entityId}})});
     return folder.id;
   }
   async persist(kind,entityId,value,name) {
     return this.exclusive(async()=>{
       await this.check();
-      const matches=kind==='quote'?(await this.listQuotes()).filter(f=>f.appProperties.entityId===entityId):await this.list(kind,entityId);
+      const area=kind==='quote'?'quotes':kind.startsWith('probe-')?kind.slice(6):kind;
+      const matches=kind==='quote'?(await this.listQuotes()).filter(f=>f.appProperties.entityId===entityId):await this.listInSection(kind,entityId,area);
       if(matches.length>1)throw new Error('동일 ID의 파일이 여러 개입니다. Drive에서 확인해주세요.');
       const existing=matches[0];let result;
       if(existing){
@@ -124,7 +156,7 @@ export class DriveStorage {
           result=await this.request(`upload/drive/v3/files/${existing.id}?uploadType=media&fields=id&supportsAllDrives=true`,{method:'PATCH',headers:{'Content-Type':'application/json',...(etag?{'If-Match':etag}:{})},body:JSON.stringify(value)});
         }
       }else{
-        const parent=kind==='quote'?await this.companyFolder(value):this.folderId;
+        const parent=kind==='quote'?await this.companyFolder(value):await this.section(area,true);
         const metadata={name,mimeType:'application/json',parents:[parent],appProperties:{app:APP,kind,entityId}};
         const boundary=`estimate_${crypto.randomUUID()}`;
         const body=`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(value)}\r\n--${boundary}--`;
@@ -132,17 +164,16 @@ export class DriveStorage {
       }
       const confirmed=await this.load(result.id,kind);
       if(JSON.stringify(confirmed)!==JSON.stringify(value))throw new Error('저장 후 검증이 일치하지 않습니다. 다시 불러와 확인해주세요.');
-      if(kind==='quote'&&value.companyName?.trim()){
-        const parent=await this.companyFolder(value);await this.moveToFolder(result.id,'quote',parent);
-      }
+      const parent=kind==='quote'?await this.companyFolder(value):await this.section(area,true);
+      await this.moveToFolder(result.id,kind,parent);
       return {fileId:result.id,value:confirmed};
     });
   }
   saveQuote(value) {const copy=structuredClone(validateQuote(value));return this.persist('quote',copy.id,copy,`${copy.quoteNumber}.json`);}
   saveCatalog(nodes) {const copy=structuredClone(validateCatalog(nodes));return this.persist('catalog','catalog',copy,'estimate-items.json');}
-  async listQuotes() {const folders=await this.list('company');const groups=await Promise.all(folders.map(f=>this.list('quote',undefined,f.id)));return [...await this.list('quote'),...groups.flat()].sort((a,b)=>(b.modifiedTime||'').localeCompare(a.modifiedTime||''));}
+  async listQuotes() {const folders=await this.companyFolders();const groups=await Promise.all(folders.map(f=>this.list('quote',undefined,f.id)));return [...await this.listInSection('quote',undefined,'quotes'),...groups.flat()].sort((a,b)=>(b.modifiedTime||'').localeCompare(a.modifiedTime||''));}
   loadQuote(id) {return this.load(id,'quote');}
-  async loadCatalog() {const files=await this.list('catalog','catalog');if(files.length>1)throw new Error('단가표 파일이 중복되어 있습니다.');return files.length?this.load(files[0].id,'catalog'):[];}
+  async loadCatalog() {const files=await this.listInSection('catalog','catalog','catalog');if(files.length>1)throw new Error('단가표 파일이 중복되어 있습니다.');return files.length?this.load(files[0].id,'catalog'):[];}
   saveWorkspace(value){return this.persist('workspace','workspace',structuredClone(validateWorkspace(value)),'estimate-workspace.json');}
   async moveToFolder(id,kind,parent){
     const before=await this.metadata(id,kind);
@@ -152,10 +183,10 @@ export class DriveStorage {
     await this.request(`drive/v3/files/${id}?${params}`,{method:'PATCH',headers:{'Content-Type':'application/json',...(before.etag?{'If-Match':before.etag}:{})},body:'{}'});
     const after=await this.metadata(id,kind);if(!after.meta.parents.includes(parent))throw new Error('견적은 저장됐지만 업체 폴더 이동 확인에 실패했습니다.');this.versions.set(id,after.version);
   }
-  async loadWorkspace(){const files=await this.list('workspace','workspace');if(files.length>1)throw new Error('업무 파일이 중복되어 있습니다.');return files.length?this.load(files[0].id,'workspace'):null;}
+  async loadWorkspace(){const files=await this.listInSection('workspace','workspace','workspace');if(files.length>1)throw new Error('업무 파일이 중복되어 있습니다.');return files.length?this.load(files[0].id,'workspace'):null;}
   async savePdf(quote,fileId,blob){return this.exclusive(async()=>{
     const {meta}=await this.metadata(fileId,'quote'),parent=meta.parents[0];
-    const folders=await this.list('company');const groups=await Promise.all([this.list('pdf',quote.id),...folders.map(f=>this.list('pdf',quote.id,f.id))]);
+    const folders=await this.companyFolders();const groups=await Promise.all([this.listInSection('pdf',quote.id,'quotes'),...folders.map(f=>this.list('pdf',quote.id,f.id))]);
     const matches=groups.flat();if(matches.length>1)throw new Error('PDF 파일이 중복되어 있습니다.');
     let id=matches[0]?.id;
     if(!id){const result=await this.request('drive/v3/files?fields=id&supportsAllDrives=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:`${quote.quoteNumber}_${quote.projectName||'견적서'}.pdf`,mimeType:'application/pdf',parents:[parent],appProperties:{app:APP,kind:'pdf',entityId:quote.id}})});id=result.id;}
@@ -168,4 +199,11 @@ export class DriveStorage {
     return id;
   });}
   async deleteQuote(id) {return this.exclusive(async()=>{const {etag,version}=await this.metadata(id,'quote');if(!version||this.versions.get(id)!==version)throw new Error('견적을 다시 불러온 뒤 삭제해주세요.');await this.request(`drive/v3/files/${encodeURIComponent(id)}?fields=id,trashed&supportsAllDrives=true`,{method:'PATCH',headers:{'Content-Type':'application/json',...(etag?{'If-Match':etag}:{})},body:JSON.stringify({trashed:true})});this.versions.delete(id);});}
+  validateProbe(value){if(value?.schema!=='estimate-storage-test-v1'||typeof value.testId!=='string'||!Number.isInteger(value.revision))throw new Error('저장 테스트 파일 형식 오류');return value;}
+  saveProbe(area,value){this.validateProbe(value);return this.persist(`probe-${area}`,value.testId,structuredClone(value),`저장검증_${value.testId}.json`);}
+  async readProbes(){
+    const results=[];
+    for(const area of ['catalog','workspace'])for(const file of await this.listInSection(`probe-${area}`,undefined,area))results.push({area,fileId:file.id,value:await this.load(file.id,`probe-${area}`)});
+    return results;
+  }
 }

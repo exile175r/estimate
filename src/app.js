@@ -192,6 +192,38 @@ $('#check-drive').onclick=()=>busy(async()=>{if(storage.folderId!==ui['folder'].
 $('#connect-drive').onclick=()=>busy(async()=>{await auth.authorize();message('Google 연결 완료. 폴더 선택에서 저장 폴더를 허용해주세요.');});
 $('#pick-folder').onclick=()=>busy(async()=>{const id=await auth.pickFolder();storage.configure(id);ui['folder'].value=id;savedSignature='';activeFileId='';updateSavedState();await checkFolder();});
 $('#disconnect-drive').onclick=()=>{auth.disconnect();storage.versions.clear();connection.textContent='Drive 미연결';ui['folder-result'].textContent='연결을 해제했습니다.';message('Google 연결을 해제했습니다. 작성 내용은 유지됩니다.');};
+
+const testResult=$('#storage-test-result');
+const testStep=text=>{testResult.textContent+=text+'\n';};
+$('#setup-folders').onclick=()=>busy(async()=>{
+ testResult.textContent='폴더 구성 중…\n';const result=await storage.setupFolders();
+ testStep(`폴더 구성 완료 · 기존 파일 ${result.moved}개 이동`);
+ for(const [key,id] of Object.entries(result.folders))testStep(`${key}: https://drive.google.com/drive/folders/${id}`);
+});
+$('#test-storage').onclick=()=>busy(async()=>{
+ testResult.textContent='테스트 시작…\n';await storage.setupFolders();
+ const testId=new Date().toISOString().replace(/[:.]/g,'-');
+ for(const area of ['catalog','workspace']){
+  const value={schema:'estimate-storage-test-v1',testId,revision:1};
+  const first=await storage.saveProbe(area,value);value.revision=2;
+  const second=await storage.saveProbe(area,value);if(first.fileId!==second.fileId)throw new Error('수정 시 파일 ID가 변경됐습니다.');
+  testStep(`${area} 생성·수정·재조회 통과: ${first.fileId}`);
+ }
+ const sample=newQuote();sample.id='storage-test-'+testId;sample.quoteNumber='저장검증_'+testId;sample.companyName='저장검증_테스트업체';sample.projectName='Drive 저장 검증';
+ const saved=await storage.saveQuote(sample);testStep(`견적 JSON 저장·재조회 통과: ${saved.fileId}`);
+ const pdf=await storage.savePdf(sample,saved.fileId,await createQuotePdf(sample));testStep(`PDF 저장·바이트 비교 통과: ${pdf}`);
+ testStep('테스트 파일 저장 검증 완료');
+});
+$('#verify-storage').onclick=()=>busy(async()=>{
+ testResult.textContent='현재 Google 계정으로 접근 확인 중…\n';await storage.check();
+ const probes=await storage.readProbes();if(!probes.length)throw new Error('접근 가능한 테스트 파일이 없습니다.');
+ for(const probe of probes)testStep(`${probe.area} 읽기 통과 · 수정 ${probe.value.revision}: ${probe.fileId}`);
+ const quotes=(await storage.listQuotes()).filter(file=>file.appProperties.entityId.startsWith('storage-test-'));
+ if(!quotes.length)throw new Error('테스트 견적에 접근할 수 없습니다.');
+ for(const file of quotes){await storage.loadQuote(file.id);testStep(`견적 읽기 통과: ${file.id}`);}
+ const catalog=await storage.loadCatalog();testStep(`공용 단가표 읽기 완료 · ${catalog.length}개 노드`);
+ testStep('현재 계정 읽기 검증 완료 · 쓰기는 테스트 파일 저장으로 검증하세요.');
+});
 auth.prepare().catch(error=>{ui['folder-result'].textContent=error.message;});
 window.addEventListener('pagehide',persistRecovery);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')persistRecovery();});
