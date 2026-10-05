@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {DriveStorage,validateCatalog} from '../src/storage.js';
 import {newQuote,createNode} from '../src/model.js';
-function harness({etag=true}={}){
+function harness({etag=true,checksum=false,churn=false}={}){
  const files=new Map();let next=0,fail=0,delay;
  const calls=[];
  const fetcher=async(url,options)=>{
@@ -29,7 +30,9 @@ function harness({etag=true}={}){
    file.version++;return json({id,trashed:file.trashed});
   }
   if(u.searchParams.get('alt')==='media'&&file.value instanceof Blob)return new Response(file.value);
-  return json(u.searchParams.get('alt')==='media'?file.value:{id,parents:file.parents,appProperties:file.appProperties,trashed:file.trashed,version:String(file.version)},200,etag?String(file.version):undefined);
+  if(churn)file.version++;
+  const md5Checksum=checksum&&file.value!==undefined?createHash('md5').update(JSON.stringify(file.value)).digest('hex'):undefined;
+  return json(u.searchParams.get('alt')==='media'?file.value:{id,parents:file.parents,appProperties:file.appProperties,trashed:file.trashed,version:String(file.version),md5Checksum},200,etag?String(file.version):undefined);
  };
  const storage=new DriveStorage({getToken:()=> 'test-token',fetcher});storage.configure('folder');
  return {storage,files,calls,setFail:n=>fail=n,setDelay:p=>delay=p};
@@ -73,4 +76,10 @@ test('업로드 후 동일 내용 재시도는 중복 파일을 만들지 않고
 test('기존 견적의 업체 변경은 JSON·PDF를 새 업체 폴더로 이동',async()=>{
  const h=harness({etag:false}),q=newQuote();q.companyName='업체 A';const {fileId}=await h.storage.saveQuote(q);const blob=new Blob(['%PDF-test']);const pdfId=await h.storage.savePdf(q,fileId,blob),oldParent=h.files.get(fileId).parents[0];
  q.companyName='업체 B';await h.storage.saveQuote(q);await h.storage.savePdf(q,fileId,blob);assert.notEqual(h.files.get(fileId).parents[0],oldParent);assert.deepEqual(h.files.get(fileId).parents,h.files.get(pdfId).parents);
+});
+test('조회 중 관리 버전이 바뀌어도 동일한 내용은 저장 확인 성공',async()=>{
+ const h=harness({etag:false,checksum:true,churn:true}),q=newQuote();const result=await h.storage.saveQuote(q);
+ assert.deepEqual(await h.storage.loadQuote(result.fileId),q);q.notes='정상 수정';await h.storage.saveQuote(q);
+ h.files.get(result.fileId).value.notes='다른 사용자의 변경';q.notes='덮어쓰기 시도';await assert.rejects(h.storage.saveQuote(q),/다시 불러온/);
+ assert.equal(h.files.get(result.fileId).value.notes,'다른 사용자의 변경');
 });

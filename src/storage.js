@@ -43,7 +43,7 @@ export class DriveStorage {
   configure(input) {this.folderId='';this.versions.clear();this.folderId=parseFolderId(input);}
   async request(path,{method='GET',body,headers={},raw=false}={}) {
     if(!this.folderId) throw new Error('Google Drive 저장 위치가 설정되어 있지 않습니다. 관리자 페이지에서 저장 위치를 설정해주세요.');
-    const response=await this.fetcher(`https://www.googleapis.com/${path}`,{method,headers:{Authorization:`Bearer ${this.getToken()}`,...headers},body});
+    const response=await this.fetcher(`https://www.googleapis.com/${path}`,{method,cache:'no-store',headers:{Authorization:`Bearer ${this.getToken()}`,...headers},body});
     if(!response.ok){
       const hints={401:'Google 인증이 만료되었습니다. 다시 연결해주세요.',403:'Drive 접근·쓰기 권한이 없습니다. Google 연결과 폴더 선택을 확인해주세요.',404:'Drive 파일 또는 폴더에 접근할 수 없습니다. 폴더 선택에서 다시 허용해주세요.',412:'다른 곳에서 파일이 수정되었습니다. 다시 불러온 뒤 저장해주세요.'};
       const details=await response.json().catch(()=>({}));
@@ -68,7 +68,7 @@ export class DriveStorage {
     return files;
   }
   async metadata(id,kind) {
-    const response=await this.request(`drive/v3/files/${encodeURIComponent(id)}?fields=id,parents,trashed,appProperties,version,mimeType,name&supportsAllDrives=true`,{raw:true});
+    const response=await this.request(`drive/v3/files/${encodeURIComponent(id)}?fields=id,parents,trashed,appProperties,version,md5Checksum,mimeType,name&supportsAllDrives=true`,{raw:true});
     const meta=await response.json();
     if(meta.trashed || meta.appProperties?.app!==APP || meta.appProperties?.kind!==kind)throw new Error('현재 폴더의 견적 작업실 파일이 아닙니다.');
     if(!meta.parents?.includes(this.folderId)){
@@ -76,13 +76,15 @@ export class DriveStorage {
       await this.metadata(meta.parents[0],'company');
     }
     const etag=response.headers.get('etag');
-    return {meta,etag,version:meta.version?String(meta.version):etag};
+    // Drive version에는 다운로드/관리 정보 변경도 포함된다. 내용 체크섬을 우선한다.
+    return {meta,etag,version:meta.md5Checksum?`md5:${meta.md5Checksum}`:meta.version?String(meta.version):etag};
   }
   async load(id,kind) {
     const before=await this.metadata(id,kind);
     const value=await this.request(`drive/v3/files/${encodeURIComponent(id)}?alt=media&supportsAllDrives=true`);
     const after=await this.metadata(id,kind);
-    if(!after.version || before.version!==after.version)throw new Error('파일이 변경되었거나 버전을 확인할 수 없습니다. 다시 불러와주세요.');
+    if(!before.version||!after.version)throw new Error('Drive가 파일 체크섬과 버전을 반환하지 않았습니다. 저장 확인을 완료하지 못했습니다.');
+    if(before.version!==after.version)throw new Error(`파일 내용이 조회 도중 변경되었습니다. 다시 불러와주세요. [Drive 버전 ${before.meta.version??'없음'} → ${after.meta.version??'없음'}]`);
     const valid=kind==='quote'?validateQuote(value):kind==='workspace'?validateWorkspace(value):validateCatalog(value);
     this.versions.set(id,after.version);return valid;
   }
