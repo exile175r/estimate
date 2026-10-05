@@ -89,7 +89,4 @@ test('구분 폴더 생성과 기존 단가표 이동은 재실행해도 ID와 �
  h.files.set('legacy',{id:'legacy',parents:['folder'],appProperties:{app:'estimate-v1',kind:'catalog',entityId:'catalog'},value,version:1});
  const first=await h.storage.setupFolders();assert.equal(first.moved,1);assert.deepEqual(h.files.get('legacy').parents,[first.folders.catalog]);assert.deepEqual(await h.storage.loadCatalog(),value);
  const again=await h.storage.setupFolders();assert.deepEqual(again.folders,first.folders);assert.equal(again.moved,0);
- const probe={schema:'estimate-storage-test-v1',testId:'test',revision:1};
- const saved=await h.storage.saveProbe('catalog',probe);probe.revision=2;assert.equal((await h.storage.saveProbe('catalog',probe)).fileId,saved.fileId);
- assert.equal((await h.storage.readProbes())[0].value.revision,2);
 });

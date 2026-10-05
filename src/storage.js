@@ -100,7 +100,7 @@ export class DriveStorage {
       if(kind==='section'||meta.parents?.length!==1)throw new Error('현재 폴더의 견적 작업실 파일이 아닙니다.');
       const parent=await this.request(`drive/v3/files/${encodeURIComponent(meta.parents[0])}?fields=id,parents,trashed,appProperties&supportsAllDrives=true`);
       if(parent.appProperties?.kind==='section'){
-        const area=kind==='catalog'?'catalog':kind==='workspace'?'workspace':['company','quote','pdf'].includes(kind)?'quotes':kind.startsWith('probe-')?kind.slice(6):'';
+        const area=kind==='catalog'?'catalog':kind==='workspace'?'workspace':['company','quote','pdf'].includes(kind)?'quotes':'';
         if(parent.trashed||parent.appProperties.app!==APP||parent.appProperties.entityId!==area||!parent.parents?.includes(this.folderId))throw new Error('현재 폴더의 견적 작업실 파일이 아닙니다.');
       }else if(['quote','pdf'].includes(kind))await this.metadata(meta.parents[0],'company');
       else throw new Error('현재 폴더의 견적 작업실 파일이 아닙니다.');
@@ -115,7 +115,7 @@ export class DriveStorage {
     const after=await this.metadata(id,kind);
     if(!before.version||!after.version)throw new Error('Drive가 파일 체크섬과 버전을 반환하지 않았습니다. 저장 확인을 완료하지 못했습니다.');
     if(before.version!==after.version)throw new Error(`파일 내용이 조회 도중 변경되었습니다. 다시 불러와주세요. [Drive 버전 ${before.meta.version??'없음'} → ${after.meta.version??'없음'}]`);
-    const valid=kind==='quote'?validateQuote(value):kind==='workspace'?validateWorkspace(value):kind.startsWith('probe-')?this.validateProbe(value):validateCatalog(value);
+    const valid=kind==='quote'?validateQuote(value):kind==='workspace'?validateWorkspace(value):validateCatalog(value);
     this.versions.set(id,after.version);return valid;
   }
   async exclusive(action) {
@@ -137,7 +137,7 @@ export class DriveStorage {
   async persist(kind,entityId,value,name) {
     return this.exclusive(async()=>{
       await this.check();
-      const area=kind==='quote'?'quotes':kind.startsWith('probe-')?kind.slice(6):kind;
+      const area=kind==='quote'?'quotes':kind;
       const matches=kind==='quote'?(await this.listQuotes()).filter(f=>f.appProperties.entityId===entityId):await this.listInSection(kind,entityId,area);
       if(matches.length>1)throw new Error('동일 ID의 파일이 여러 개입니다. Drive에서 확인해주세요.');
       const existing=matches[0];let result;
@@ -199,11 +199,4 @@ export class DriveStorage {
     return id;
   });}
   async deleteQuote(id) {return this.exclusive(async()=>{const {etag,version}=await this.metadata(id,'quote');if(!version||this.versions.get(id)!==version)throw new Error('견적을 다시 불러온 뒤 삭제해주세요.');await this.request(`drive/v3/files/${encodeURIComponent(id)}?fields=id,trashed&supportsAllDrives=true`,{method:'PATCH',headers:{'Content-Type':'application/json',...(etag?{'If-Match':etag}:{})},body:JSON.stringify({trashed:true})});this.versions.delete(id);});}
-  validateProbe(value){if(value?.schema!=='estimate-storage-test-v1'||typeof value.testId!=='string'||!Number.isInteger(value.revision))throw new Error('저장 테스트 파일 형식 오류');return value;}
-  saveProbe(area,value){this.validateProbe(value);return this.persist(`probe-${area}`,value.testId,structuredClone(value),`저장검증_${value.testId}.json`);}
-  async readProbes(){
-    const results=[];
-    for(const area of ['catalog','workspace'])for(const file of await this.listInSection(`probe-${area}`,undefined,area))results.push({area,fileId:file.id,value:await this.load(file.id,`probe-${area}`)});
-    return results;
-  }
 }
